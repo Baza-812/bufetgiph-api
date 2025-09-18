@@ -12,7 +12,7 @@ const MB_LINE_TYPE   = process.env.MB_LINE_TYPE   || 'Line Type';
 
 const OL_ORDER_FIELD = process.env.OL_ORDER_FIELD || 'Order';
 const OL_ITEM_FIELD  = process.env.OL_ITEM_FIELD  || 'Item (Menu Item)';
-const OL_QTY_FIELD   = process.env.Ol_QTY_FIELD   || 'Quantity';
+const OL_QTY_FIELD   = process.env.OL_QTY_FIELD   || 'Quantity';
 const OL_LINE_TYPE   = process.env.OL_LINE_TYPE   || 'Line Type';
 
 const LINE_TYPE_INCLUDED = process.env.LINE_TYPE_INCLUDED || 'Included';
@@ -22,8 +22,8 @@ const STATUS_NEW         = process.env.STATUS_NEW         || 'New';
 const EMP_ORG_LOOKUP     = process.env.EMP_ORG_LOOKUP     || 'OrgID (from Organization)';
 const MENU_ACCESS_FIELD  = process.env.MENU_ACCESS_FIELD  || 'AccessLine';
 
-// ---- helpers ----
-const both = (keyA, keyB, value) => ({ [keyA]: value, [keyB]: value }); // запишем в оба ключа
+// маленький хелпер чтобы писать сразу в 2 возможных названия поля
+const both = (A, B, v) => ({ [A]: v, [B]: v });
 
 async function employeeAllowed(employeeID, org, token) {
   const emp = await aFindOne(
@@ -50,11 +50,11 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'missing fields' });
     }
 
-    // 1) сотрудник ок?
+    // 1) верификация сотрудника
     const emp = await employeeAllowed(employeeID, org, token);
     if (!emp) return res.status(403).json({ error: 'employee not allowed' });
 
-    // 2) дата доступна?
+    // 2) дата доступна org
     const menuDate = await aFindOne(
       T.menu,
       `AND(
@@ -85,12 +85,10 @@ export default async function handler(req, res) {
     }]);
     const orderId = o.records[0].id;
 
-    // 5) создаём детей БЕЗ Order, потом привязываем с родителя
+    // 5) создаём детей (пока без Order, потом привяжем с родителя)
     const extras = Array.isArray(included?.extras) ? included.extras.slice(0, 2) : [];
-    let createdOL = 0, createdMB = 0;
     let olIds = [], mbIds = [];
 
-    // ---- Order Lines (extras) ----
     if (extras.length) {
       const recs = extras.map(id => ({
         ...both(OL_ITEM_FIELD, 'Item (Menu Item)', [{ id }]),
@@ -98,11 +96,9 @@ export default async function handler(req, res) {
         [OL_LINE_TYPE]: LINE_TYPE_INCLUDED
       }));
       const r1 = await aCreate(T.orderlines, recs);
-      createdOL = (r1.records || []).length;
       olIds = (r1.records || []).map(x => x.id);
     }
 
-    // ---- Meal Box (main + side) ----
     if (!included.mainId) return res.status(400).json({ error: 'mainId required' });
 
     const mbRec = {
@@ -114,12 +110,10 @@ export default async function handler(req, res) {
       mbRec,
       both(MB_SIDE_FIELD, 'Side (Menu Item)', [{ id: included.sideId }])
     );
-
     const r2 = await aCreate(T.mealboxes, [mbRec]);
-    createdMB = (r2.records || []).length;
     mbIds = (r2.records || []).map(x => x.id);
 
-    // 6) привяжем детей с РОДИТЕЛЯ
+    // 6) привязка с родителя
     await aUpdate(T.orders, [{
       id: orderId,
       fields: {
@@ -128,17 +122,23 @@ export default async function handler(req, res) {
       }
     }]);
 
-    // 7) верификация (сколько подцепилось)
-    const vr = await aGet(T.orders, {
+    // 7) читаем назад: сами дети + родительские ссылки
+    const olDetail = olIds.length
+      ? await aGet(T.orderlines, { filterByFormula: `OR(${olIds.map(id=>`RECORD_ID()='${id}'`).join(',')})` })
+      : { records: [] };
+    const mbDetail = mbIds.length
+      ? await aGet(T.mealboxes, { filterByFormula: `OR(${mbIds.map(id=>`RECORD_ID()='${id}'`).join(',')})` })
+      : { records: [] };
+    const ordCheck = await aGet(T.orders, {
       filterByFormula: `RECORD_ID()='${fstr(orderId)}'`,
       'fields[]': [ORDER_OL_LINK_FIELD, ORDER_MB_LINK_FIELD]
     });
-    const fld = vr.records?.[0]?.fields || {};
-    const linkedOL = Array.isArray(fld[ORDER_OL_LINK_FIELD]) ? fld[ORDER_OL_LINK_FIELD].length : 0;
-    const linkedMB = Array.isArray(fld[ORDER_MB_LINK_FIELD]) ? fld[ORDER_MB_LINK_FIELD].length : 0;
 
-    // 8) если вдруг не подцепилось — запасной ход: проставим Order в детях (в оба возможных поля)
-    let fallback = { ol: false, mb: false };
+    // 8) если не подцепилось — запасной ход: ставим Order в детях (и снова читаем)
+    let fallback = { ol:false, mb:false };
+    const linkedOL = ordCheck.records?.[0]?.fields?.[ORDER_OL_LINK_FIELD]?.length || 0;
+    const linkedMB = ordCheck.records?.[0]?.fields?.[ORDER_MB_LINK_FIELD]?.length || 0;
+
     if (linkedOL < olIds.length && olIds.length) {
       await aUpdate(T.orderlines, olIds.map(id => ({ id, fields: both(OL_ORDER_FIELD, 'Order', [{ id: orderId }]) })));
       fallback.ol = true;
@@ -148,12 +148,29 @@ export default async function handler(req, res) {
       fallback.mb = true;
     }
 
+    const ordCheck2 = await aGet(T.orders, {
+      filterByFormula: `RECORD_ID()='${fstr(orderId)}'`,
+      'fields[]': [ORDER_OL_LINK_FIELD, ORDER_MB_LINK_FIELD]
+    });
+
     res.status(200).json({
       ok: true,
       orderId,
-      created: { orderLines: createdOL, mealBoxes: createdMB },
+      created: { orderLines: olIds.length, mealBoxes: mbIds.length },
       ids: { orderLines: olIds, mealBoxes: mbIds },
-      linked: { fromParent: { ol: linkedOL, mb: linkedMB }, fallback }
+      // вот тут ПОЛЯ дочерних записей — смотрим содержимое
+      children: {
+        mealBoxes: mbDetail.records?.map(r => ({ id:r.id, fields:r.fields })) || [],
+        orderLines: olDetail.records?.map(r => ({ id:r.id, fields:r.fields })) || []
+      },
+      linked: {
+        fromParent_before: { ol: linkedOL, mb: linkedMB },
+        fallback_applied: fallback,
+        fromParent_after: {
+          ol: ordCheck2.records?.[0]?.fields?.[ORDER_OL_LINK_FIELD]?.length || 0,
+          mb: ordCheck2.records?.[0]?.fields?.[ORDER_MB_LINK_FIELD]?.length || 0
+        }
+      }
     });
 
   } catch (e) {
