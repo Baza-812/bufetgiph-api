@@ -18,7 +18,10 @@ export function fstr(s=''){ return String(s).replace(/'/g, "''"); }
 export async function aGet(table, params={}){
   const url = new URL(`${API}/${encodeURIComponent(table)}`);
   for (const [k,v] of Object.entries(params)){
-    if (Array.isArray(v)) v.forEach(val=> url.searchParams.append(k, val));
+    if (Array.isArray(v)) {
+      const keyName = k === 'fields' ? 'fields[]' : k;   // поддержка массивов полей
+      v.forEach(val => url.searchParams.append(keyName, val));
+      }
     else if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
   }
   const r = await fetch(url, { headers: HDRS });
