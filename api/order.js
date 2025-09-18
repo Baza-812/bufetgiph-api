@@ -23,7 +23,14 @@ export default async function handler(req,res){
     if(!emp) return res.status(403).json({error:'employee not allowed'});
 
     // 2) Дата доступна (Published+AccessLine)
-    const menuDate = await aFindOne(T.menu, `AND({Published}=1, {Date}='${fstr(date)}', OR({AccessLine}='ALL', FIND('${fstr(org)}',{AccessLine})))`);
+    const menuDate = await aFindOne(
+  T.menu,
+  `AND(
+    {Published}=1,
+    IS_SAME({Date}, DATETIME_PARSE('${fstr(date)}'), 'day'),
+    OR({AccessLine}='ALL', FIND('${fstr(org)}', {AccessLine}))
+  )`
+);
     if(!menuDate) return res.status(400).json({error:'date is not available for this org'});
 
     // 3) Анти-дубль
