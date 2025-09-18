@@ -6,7 +6,7 @@ async function employeeAllowed(employeeID, org, token){
       RECORD_ID()='${fstr(employeeID)}',
       {Status}!='Inactive',
       {Order Token}='${fstr(token)}',
-      FIND('${fstr(org)}', {OrgID (from Organizations)} & '') > 0
+      FIND('${fstr(org)}', {OrgID (from Organization)} & '') > 0
     )`);
   return emp;
 }
