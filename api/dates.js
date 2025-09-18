@@ -8,7 +8,11 @@ export default async function handler(req,res){
 
     // сотрудник активен и принадлежит org
     const emp = await aFindOne(T.employees,
-      `AND(RECORD_ID()='${fstr(employeeID)}', {OrgID}='${fstr(org)}', {Status}='Active')`);
+  `AND(
+    RECORD_ID()='${fstr(employeeID)}',
+    {Status}='Active',
+    FIND('${fstr(org)}', {OrgID (from Organization)}) > 0
+  )`);
     if(!emp) return res.status(403).json({ error:'employee not allowed' });
 
     // Published меню на 7 дней вперёд, доступно для org
