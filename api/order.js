@@ -41,8 +41,8 @@ export default async function handler(req,res){
     // 4) Создаём Order
     const o = await aCreate(T.orders, [{
       'Order Date': date,
-      'Order Type': { name: 'Employee' },
-      'Status': { name: 'New' },
+      'Order Type': 'Employee',
+      'Status': 'New',
       'Employee': [{ id: employeeID }]
     }]);
     const orderId = o.records[0].id;
