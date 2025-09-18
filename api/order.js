@@ -54,7 +54,7 @@ export default async function handler(req,res){
         'Order': [{ id: orderId }],
         'Item (Menu Item)': [{ id }],
         'Quantity': 1,
-        'Line Type': { name: 'Included' }
+        'Line Type': 'Included'
       }));
       await aCreate(T.orderlines, ol);
     }
@@ -65,8 +65,8 @@ export default async function handler(req,res){
       'Order': [{ id: orderId }],
       'Main (Menu Item)': [{ id: included.mainId }],
       'Quantity': 1,
-      'Line Type': { name: 'Included' },
-      'Packaging': { name: 'В одном' }
+      'Line Type': 'Included',
+      'Packaging': 'В одном'
     };
     if (included.sideId) mb['Side (Menu Item)'] = [{ id: included.sideId }];
     await aCreate(T.mealboxes, [mb]);
