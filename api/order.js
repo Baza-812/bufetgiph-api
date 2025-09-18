@@ -2,7 +2,12 @@ import { aFindOne, aCreate, aGet, T, fstr, cors } from './_lib/air.js';
 
 async function employeeAllowed(employeeID, org, token){
   const emp = await aFindOne(T.employees,
-    `AND(RECORD_ID()='${fstr(employeeID)}', {OrgID}='${fstr(org)}', {Status}='Active', {Order Token}='${fstr(token)}')`);
+  `AND(
+    RECORD_ID()='${fstr(employeeID)}',
+    {Status}='Active',
+    {Order Token}='${fstr(token)}',
+    FIND('${fstr(org)}', {OrgID (from Organizations)}) > 0
+  )`);
   return emp;
 }
 
