@@ -93,10 +93,9 @@ export default async function handler(req, res) {
 
     if (extras.length) {
       const records = extras.map(id => ({
-        [OL_ORDER_FIELD]: [{ id: orderId }],
-        [OL_ITEM_FIELD]:  [{ id }],
-        [OL_QTY_FIELD]:   1,
-        [OL_LINE_TYPE]:   LINE_TYPE_INCLUDED
+       'Item (Menu Item)': [{ id }],
+    'Quantity': 1,
+    'Line Type': LINE_TYPE_INCLUDED
       }));
       const r1 = await aCreate(T.orderlines, records);
       createdOL = (r1.records || []).length;
@@ -107,9 +106,8 @@ export default async function handler(req, res) {
     if (!included.mainId) return res.status(400).json({ error: 'mainId required' });
 
     const mbRec = {
-      [MB_ORDER_FIELD]: [{ id: orderId }],
-      [MB_MAIN_FIELD]:  [{ id: included.mainId }],
-      [MB_LINE_TYPE]:   LINE_TYPE_INCLUDED,
+      'Main (Menu Item)': [{ id: included.mainId }],
+  'Line Type': LINE_TYPE_INCLUDED,
       'Quantity': 1
     };
     if (included.sideId) mbRec[MB_SIDE_FIELD] = [{ id: included.sideId }];
@@ -122,8 +120,8 @@ export default async function handler(req, res) {
     await aUpdate(T.orders, [{
       id: orderId,
       fields: {
-        [ORDER_OL_LINK_FIELD]: olIds,
-        [ORDER_MB_LINK_FIELD]: mbIds
+       'Order Lines': olIds,   // имя поля в Orders
+    'Meal Boxes':  mbIds    // имя поля в Orders
       }
     }]);
 
