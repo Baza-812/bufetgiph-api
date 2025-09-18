@@ -37,7 +37,19 @@ export default async function handler(req,res){
     const oj = await aGet(T.orders, { filterByFormula: filterOrders, fields: ['Order Date'] });
     const have = new Set((oj.records||[]).map(r=>r.fields['Order Date']));
 
-    const dates = (dj.records||[]).map(r=>({ id:r.id, date:r.fields.Date, hasOrder: have.has(r.fields.Date) }));
-    res.status(200).json({ dates });
+    const perDate = new Map();
+for (const r of (dj.records||[])) {
+  const d = r.fields.Date;
+  if (!d) continue;
+  // берём первый встретившийся id, он нам не принципиален
+  if (!perDate.has(d)) perDate.set(d, { id: r.id, date: d });
+}
+
+const dates = Array.from(perDate.values()).map(x => ({
+  ...x,
+  hasOrder: have.has(x.date)
+}));
+
+res.status(200).json({ dates });
   }catch(e){ res.status(500).json({ error: e.message }); }
 }
