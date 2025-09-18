@@ -51,4 +51,13 @@ export const T = {
   mealboxes: process.env.MEALBOXES_TABLE || 'Meal Boxes',
   orderlines: process.env.ORDERLINES_TABLE || 'Order Lines',
   orgs: process.env.ORGS_TABLE || 'Organizations'
+}
+  export async function aUpdate(table, records){
+  const r = await fetch(`${API}/${encodeURIComponent(table)}`, {
+    method: 'PATCH',
+    headers: HDRS,
+    body: JSON.stringify({ records, typecast: true })
+  });
+  if (!r.ok) throw new Error(`UPDATE ${table}: ${r.status} ${await r.text()}`);
+  return r.json();
 };
