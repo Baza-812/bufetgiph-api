@@ -1,18 +1,16 @@
 // api/order.js
 import { aGet, aFindOne, aCreate, aUpdate, T, fstr, cors } from './_lib/air.js';
 
-// Поля в Orders (родитель) — оставим на дефолтах
+// Константы/поля — без ENV, чтобы исключить расхождения имен
 const ORDER_MB_LINK_FIELD = 'Meal Boxes';
 const ORDER_OL_LINK_FIELD = 'Order Lines';
 
-// Опции
+const EMP_ORG_LOOKUP    = process.env.EMP_ORG_LOOKUP    || 'OrgID (from Organization)';
+const MENU_ACCESS_FIELD = process.env.MENU_ACCESS_FIELD || 'AccessLine';
+
 const LINE_TYPE_INCLUDED = 'Included';
 const ORDER_TYPE_EMP     = 'Employee';
 const STATUS_NEW         = 'New';
-
-// Lookup и доступ
-const EMP_ORG_LOOKUP    = process.env.EMP_ORG_LOOKUP    || 'OrgID (from Organization)';
-const MENU_ACCESS_FIELD = process.env.MENU_ACCESS_FIELD || 'AccessLine';
 
 async function employeeAllowed(employeeID, org, token) {
   return await aFindOne(
@@ -28,7 +26,7 @@ async function employeeAllowed(employeeID, org, token) {
 
 export default async function handler(req, res) {
   cors(res);
-  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
@@ -38,11 +36,11 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'missing fields' });
     }
 
-    // 1) Верификация
+    // 1) Проверка сотрудника
     const emp = await employeeAllowed(employeeID, org, token);
     if (!emp) return res.status(403).json({ error: 'employee not allowed' });
 
-    // 2) Дата доступна
+    // 2) Дата доступна для org
     const menuDate = await aFindOne(
       T.menu,
       `AND(
@@ -73,66 +71,61 @@ export default async function handler(req, res) {
     }]);
     const orderId = o.records[0].id;
 
-    // 5) Создаём детей (пока пустые, без ссылок) — потом дозагоним PATCH'ем
+    // 5) Создаём детей (пока без ссылок на Menu/Order — проставим PATCH'ем)
     const extras = Array.isArray(included?.extras) ? included.extras.slice(0, 2) : [];
     let olIds = [], mbIds = [];
 
-    // Order Lines
     if (extras.length) {
       const r1 = await aCreate(T.orderlines, extras.map(() => ({
-        // поля поставим ниже PATCH'ем
         'Quantity': 1,
         'Line Type': LINE_TYPE_INCLUDED
       })));
       olIds = (r1.records || []).map(x => x.id);
     }
 
-    // Meal Box (одна коробка)
     const r2 = await aCreate(T.mealboxes, [{
       'Quantity': 1,
       'Line Type': LINE_TYPE_INCLUDED
-      // main/side дозагоним PATCH'ем
     }]);
     mbIds = (r2.records || []).map(x => x.id);
 
-    // 6) Жёстко проставляем поля в детях PATCH'ем (используем ТОЛЬКО дефолтные имена)
-    // Order Lines: Item (Menu Item) + Order
-    if (olIds.length) {
-      const updates = olIds.map((id, i) => ({
-        id,
+    // 6) Проставляем ссылки в ДЕТЯХ (Order + Item/Main/Side)
+    const updOL = [];
+    for (let i = 0; i < olIds.length; i++) {
+      updOL.push({
+        id: olIds[i],
         fields: {
-          'Item (Menu Item)': [{ id: extras[i] }],
           'Order': [{ id: orderId }],
+          'Item (Menu Item)': [{ id: extras[i] }],
           'Quantity': 1,
           'Line Type': LINE_TYPE_INCLUDED
         }
-      }));
-      await aUpdate(T.orderlines, updates);
+      });
     }
+    if (updOL.length) await aUpdate(T.orderlines, updOL);
 
-    // Meal Box: Main/Side + Order
     if (!included.mainId) return res.status(400).json({ error: 'mainId required' });
-    {
-      const fields = {
-        'Main (Menu Item)': [{ id: included.mainId }],
-        'Order': [{ id: orderId }],
-        'Quantity': 1,
-        'Line Type': LINE_TYPE_INCLUDED
-      };
-      if (included.sideId) fields['Side (Menu Item)'] = [{ id: included.sideId }];
-      await aUpdate(T.mealboxes, [{ id: mbIds[0], fields }]);
-    }
+    const mbFields = {
+      'Order': [{ id: orderId }],
+      'Main (Menu Item)': [{ id: included.mainId }],
+      'Quantity': 1,
+      'Line Type': LINE_TYPE_INCLUDED
+    };
+    if (included.sideId) mbFields['Side (Menu Item)'] = [{ id: included.sideId }];
+    await aUpdate(T.mealboxes, [{ id: mbIds[0], fields: mbFields }]);
 
-    // 7) Привязываем детей на родителе (на всякий случай)
+    // 7) Привяжем детей с РОДИТЕЛЯ (важно: массив объектов {id})
+    const toLinkOL = olIds.map(id => ({ id }));
+    const toLinkMB = mbIds.map(id => ({ id }));
     await aUpdate(T.orders, [{
       id: orderId,
       fields: {
-        [ORDER_OL_LINK_FIELD]: olIds.map(id => ({ id })),
-        [ORDER_MB_LINK_FIELD]: mbIds.map(id => ({ id }))
+        [ORDER_OL_LINK_FIELD]: toLinkOL,
+        [ORDER_MB_LINK_FIELD]: toLinkMB
       }
     }]);
 
-    // 8) Контрольный снятый слепок (сколько подцепилось на родителе)
+    // 8) Контроль: сколько видно на родителе
     const ordCheck = await aGet(T.orders, {
       filterByFormula: `RECORD_ID()='${fstr(orderId)}'`,
       'fields[]': [ORDER_OL_LINK_FIELD, ORDER_MB_LINK_FIELD]
