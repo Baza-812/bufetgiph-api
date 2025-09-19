@@ -8,14 +8,14 @@ if (!AIRTABLE_KEY || !AIRTABLE_BASE) {
   console.warn('[air.js] Missing AIRTABLE_API_KEY or AIRTABLE_BASE env vars');
 }
 
-// --- Таблицы (единые имена по базе) ---
+// --- Имена таблиц ---
 export const T = {
-  employees:   'Employees',
+  employees:     'Employees',
   organizations: 'Organizations',
-  menu:        'Menu',          // расписание меню на даты
-  orders:      'Orders',
-  orderlines:  'Order Lines',
-  mealboxes:   'Meal Boxes',
+  menu:          'Menu',
+  orders:        'Orders',
+  orderlines:    'Order Lines',
+  mealboxes:     'Meal Boxes',
 };
 
 // --- Утилиты ---
@@ -23,28 +23,25 @@ function buildQuery(params = {}) {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null) continue;
-    if (Array.isArray(v)) {
-      v.forEach((item) => qs.append(k, String(item)));
-    } else {
-      qs.append(k, String(v));
-    }
+    if (Array.isArray(v)) v.forEach(item => qs.append(k, String(item)));
+    else qs.append(k, String(v));
   }
   return qs.toString();
 }
 
-// безопасная строка для формул Airtable (экраним одиночные кавычки)
+// экранирование одинарных кавычек для формул Airtable
 export function fstr(s = '') {
   return String(s).replace(/'/g, "\\'");
 }
 
-// простые CORS заголовки для API
+// простые CORS заголовки
 export function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 }
 
-// Базовый fetch к Airtable
+// Базовый запрос к Airtable
 async function airRequest(method, table, { query, body, label } = {}) {
   const baseUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE}/${encodeURIComponent(table)}`;
   const url = query ? `${baseUrl}?${buildQuery(query)}` : baseUrl;
@@ -67,26 +64,28 @@ async function airRequest(method, table, { query, body, label } = {}) {
   return json;
 }
 
-// --- Публичные хелперы ---
-
-// GET с query-параметрами (fields[], filterByFormula, maxRecords и т.д.)
+// --- Хелперы ---
+// GET c query (fields[], filterByFormula и т.д.)
 export async function aGet(table, params = {}) {
   return airRequest('GET', table, { query: params, label: 'GET' });
 }
 
-// Создание записей (всегда с typecast:true для ссылок/селектов)
+// CREATE: оборачиваем каждый объект в {fields: ...} + typecast:true
 export async function aCreate(table, records) {
-  const body = { records, typecast: true };
-  return airRequest('POST', table, { body, label: 'CREATE' });
+  const payload = {
+    records: records.map(r => ({ fields: r })),
+    typecast: true,
+  };
+  return airRequest('POST', table, { body: payload, label: 'CREATE' });
 }
 
-// Обновление записей (всегда с typecast:true)
+// UPDATE: ожидает {id, fields} + typecast:true (как у тебя в коде)
 export async function aUpdate(table, records) {
-  const body = { records, typecast: true };
-  return airRequest('PATCH', table, { body, label: 'UPDATE' });
+  const payload = { records, typecast: true };
+  return airRequest('PATCH', table, { body: payload, label: 'UPDATE' });
 }
 
-// Найти один (первый) по формуле; вернёт объект записи или null
+// Найти первый по формуле
 export async function aFindOne(table, filterFormula) {
   const resp = await aGet(table, {
     filterByFormula: filterFormula,
