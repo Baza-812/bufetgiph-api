@@ -1,25 +1,73 @@
 // api/order.js
 import { aGet, aFindOne, aCreate, aUpdate, T, fstr, cors } from './_lib/air.js';
 
-// Константы/поля — без ENV, чтобы исключить расхождения имен
-const ORDER_MB_LINK_FIELD = 'Meal Boxes';
-const ORDER_OL_LINK_FIELD = 'Order Lines';
+/**
+ * ======================
+ * Константы и настройки
+ * ======================
+ */
+const ORDER_TYPE_EMP = 'Employee';
+const STATUS_NEW = 'New';
+const LINE_INCLUDED = 'Included';
 
-const EMP_ORG_LOOKUP    = process.env.EMP_ORG_LOOKUP    || 'OrgID (from Organization)';
+// Имя lookup-поля с кодом организации у сотрудника (в Employees)
+const EMP_ORG_LOOKUP = process.env.EMP_ORG_LOOKUP || 'OrgID (from Organization)';
+
+// Поле-доступа в Menu (строка: 'ALL' или список кодов через разделитель)
 const MENU_ACCESS_FIELD = process.env.MENU_ACCESS_FIELD || 'AccessLine';
 
-const LINE_TYPE_INCLUDED = 'Included';
-const ORDER_TYPE_EMP     = 'Employee';
-const STATUS_NEW         = 'New';
+// Имена (или ID) ссылочных полей в Orders (родительские поля)
+const ORDERS_OL_FIELD = process.env.ORDERS_OL_FIELD || 'Order Lines';
+const ORDERS_MB_FIELD = process.env.ORDERS_MB_FIELD || 'Meal Boxes';
 
+/**
+ * Утилиты
+ */
+const orByIds = (ids) =>
+  ids && ids.length ? `OR(${ids.map((id) => `RECORD_ID()='${fstr(id)}'`).join(',')})` : "FALSE()";
+
+/**
+ * Проверка, что сотрудник может делать заказ:
+ *  - активен
+ *  - токен совпадает
+ *  - принадлежит организации org (совпадение по EMP_ORG_LOOKUP)
+ */
 async function employeeAllowed(employeeID, org, token) {
-  return await aFindOne(
+  return aFindOne(
     T.employees,
     `AND(
       RECORD_ID()='${fstr(employeeID)}',
       {Status}!='Inactive',
       {Order Token}='${fstr(token)}',
-      FIND('${fstr(org)}', {${EMP_ORG_LOOKUP}} & '') > 0
+      OR({${EMP_ORG_LOOKUP}}='${fstr(org)}', FIND('${fstr(org)}', {${EMP_ORG_LOOKUP}} & '') > 0)
+    )`
+  );
+}
+
+/**
+ * Проверка доступности меню на дату для организации
+ */
+async function dateAllowed(date, org) {
+  return aFindOne(
+    T.menu,
+    `AND(
+      {Published}=1,
+      IS_SAME({Date}, DATETIME_PARSE('${fstr(date)}'), 'day'),
+      OR({${MENU_ACCESS_FIELD}}='ALL', FIND('${fstr(org)}', {${MENU_ACCESS_FIELD}} & '') > 0)
+    )`
+  );
+}
+
+/**
+ * Проверка дубля заказа (на дату и сотрудника)
+ */
+async function hasDuplicate(employeeID, date) {
+  return aFindOne(
+    T.orders,
+    `AND(
+      {Employee}='${fstr(employeeID)}',
+      IS_SAME({Order Date}, DATETIME_PARSE('${fstr(date)}'), 'day'),
+      {Status}!='Cancelled'
     )`
   );
 }
@@ -27,121 +75,99 @@ async function employeeAllowed(employeeID, org, token) {
 export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
   try {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
-
     const { employeeID, org, token, date, included } = req.body || {};
-    if (!employeeID || !org || !token || !date || !included) {
+
+    // Валидации входа
+    if (!employeeID || !org || !token || !date || !included?.mainId) {
       return res.status(400).json({ error: 'missing fields' });
     }
 
-    // 1) Проверка сотрудника
+    // 1) Доступ сотрудника и даты
     const emp = await employeeAllowed(employeeID, org, token);
     if (!emp) return res.status(403).json({ error: 'employee not allowed' });
 
-    // 2) Дата доступна для org
-    const menuDate = await aFindOne(
-      T.menu,
-      `AND(
-        {Published}=1,
-        IS_SAME({Date}, DATETIME_PARSE('${fstr(date)}'), 'day'),
-        OR({${MENU_ACCESS_FIELD}}='ALL', FIND('${fstr(org)}', {${MENU_ACCESS_FIELD}} & ''))
-      )`
-    );
-    if (!menuDate) return res.status(400).json({ error: 'date is not available for this org' });
+    const menuOk = await dateAllowed(date, org);
+    if (!menuOk) return res.status(400).json({ error: 'date is not available for this org' });
 
-    // 3) Анти-дубль
-    const dup = await aFindOne(
-      T.orders,
-      `AND(
-        {Employee}='${fstr(employeeID)}',
-        IS_SAME({Order Date}, DATETIME_PARSE('${fstr(date)}'), 'day'),
-        {Status}!='Cancelled'
-      )`
-    );
-    if (dup) return res.status(200).json({ ok: true, duplicate: true, orderId: dup.id });
-
-    // 4) Создаём Order
-    const o = await aCreate(T.orders, [{
-      'Order Date': date,
-      'Order Type': ORDER_TYPE_EMP,
-      'Status': STATUS_NEW,
-      'Employee': [{ id: employeeID }]
-    }]);
-    const orderId = o.records[0].id;
-
-    // 5) Создаём детей (пока без ссылок на Menu/Order — проставим PATCH'ем)
-    const extras = Array.isArray(included?.extras) ? included.extras.slice(0, 2) : [];
-    let olIds = [], mbIds = [];
-
-    if (extras.length) {
-      const r1 = await aCreate(T.orderlines, extras.map(() => ({
-        'Quantity': 1,
-        'Line Type': LINE_TYPE_INCLUDED
-      })));
-      olIds = (r1.records || []).map(x => x.id);
+    const dup = await hasDuplicate(employeeID, date);
+    if (dup) {
+      return res.status(200).json({ ok: true, duplicate: true, orderId: dup.id });
     }
 
-    const r2 = await aCreate(T.mealboxes, [{
+    // 2) Создаём заказ
+    const orderResp = await aCreate(T.orders, [
+      {
+        'Order Date': date,
+        'Order Type': ORDER_TYPE_EMP,
+        'Status': STATUS_NEW,
+        'Employee': [{ id: employeeID }],
+      },
+    ]);
+    const orderId = orderResp.records[0].id;
+
+    // 3) Создаём детей (без ссылок на Order) + сразу пробуем проставить ссылки на меню
+    const extras = Array.isArray(included.extras) ? included.extras.slice(0, 2) : [];
+    const toCreateOL = extras.map((extraId) => ({
       'Quantity': 1,
-      'Line Type': LINE_TYPE_INCLUDED
-    }]);
-    mbIds = (r2.records || []).map(x => x.id);
-
-    // 6) Проставляем ссылки в ДЕТЯХ (Order + Item/Main/Side)
-    const updOL = [];
-    for (let i = 0; i < olIds.length; i++) {
-      updOL.push({
-        id: olIds[i],
-        fields: {
-          'Order': [{ id: orderId }],
-          'Item (Menu Item)': [{ id: extras[i] }],
-          'Quantity': 1,
-          'Line Type': LINE_TYPE_INCLUDED
-        }
-      });
-    }
-    if (updOL.length) await aUpdate(T.orderlines, updOL);
-
-    if (!included.mainId) return res.status(400).json({ error: 'mainId required' });
-    const mbFields = {
-      'Order': [{ id: orderId }],
+      'Line Type': LINE_INCLUDED,
+      // попробуем сразу связать с меню (Item)
+      ...(extraId ? { 'Item (Menu Item)': [{ id: extraId }] } : {}),
+    }));
+    const toCreateMB = [{
+      'Quantity': 1,
+      'Line Type': LINE_INCLUDED,
       'Main (Menu Item)': [{ id: included.mainId }],
-      'Quantity': 1,
-      'Line Type': LINE_TYPE_INCLUDED
-    };
-    if (included.sideId) mbFields['Side (Menu Item)'] = [{ id: included.sideId }];
-    await aUpdate(T.mealboxes, [{ id: mbIds[0], fields: mbFields }]);
+      ...(included.sideId ? { 'Side (Menu Item)': [{ id: included.sideId }] } : {}),
+    }];
 
-    // 7) Привяжем детей с РОДИТЕЛЯ (важно: массив объектов {id})
-    const toLinkOL = olIds.map(id => ({ id }));
-    const toLinkMB = mbIds.map(id => ({ id }));
-    await aUpdate(T.orders, [{
-      id: orderId,
-      fields: {
-        [ORDER_OL_LINK_FIELD]: toLinkOL,
-        [ORDER_MB_LINK_FIELD]: toLinkMB
-      }
-    }]);
+    let olIds = [];
+    if (toCreateOL.length) {
+      const olResp = await aCreate(T.orderlines, toCreateOL);
+      olIds = (olResp.records || []).map((r) => r.id);
+    }
+    const mbResp = await aCreate(T.mealboxes, toCreateMB);
+    const mbIds = (mbResp.records || []).map((r) => r.id);
 
-    // 8) Контроль: сколько видно на родителе
-    const ordCheck = await aGet(T.orders, {
+    // 4) Пришиваем детей к заказу СО СТОРОНЫ РОДИТЕЛЯ
+    //    (как в официальном мануале Airtable) — передаём ПОЛНЫЙ список детей.
+    const fieldsForParent = {};
+    fieldsForParent[ORDERS_OL_FIELD] = olIds; // массив rec-id строк
+    fieldsForParent[ORDERS_MB_FIELD] = mbIds; // массив rec-id коробок
+
+    await aUpdate(T.orders, [
+      {
+        id: orderId,
+        fields: fieldsForParent,
+      },
+    ]);
+
+    // 5) Контрольный read-back: читаем детей и родителя
+    const readBack = { order: null, orderLines: [], mealBoxes: [] };
+
+    if (olIds.length) {
+      const rOL = await aGet(T.orderlines, { filterByFormula: orByIds(olIds) });
+      readBack.orderLines = rOL.records || [];
+    }
+    const rMB = await aGet(T.mealboxes, { filterByFormula: orByIds(mbIds) });
+    readBack.mealBoxes = rMB.records || [];
+
+    const rOrd = await aGet(T.orders, {
       filterByFormula: `RECORD_ID()='${fstr(orderId)}'`,
-      'fields[]': [ORDER_OL_LINK_FIELD, ORDER_MB_LINK_FIELD]
+      'fields[]': [ORDERS_OL_FIELD, ORDERS_MB_FIELD],
     });
-    const linkedOL = ordCheck.records?.[0]?.fields?.[ORDER_OL_LINK_FIELD]?.length || 0;
-    const linkedMB = ordCheck.records?.[0]?.fields?.[ORDER_MB_LINK_FIELD]?.length || 0;
+    readBack.order = (rOrd.records && rOrd.records[0]) || null;
 
-    res.status(200).json({
+    return res.status(200).json({
       ok: true,
       orderId,
-      created: { orderLines: olIds.length, mealBoxes: mbIds.length },
       ids: { orderLines: olIds, mealBoxes: mbIds },
-      linked: { ol: linkedOL, mb: linkedMB }
+      readBack,
     });
-
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    // Вернём понятное сообщение
+    return res.status(500).json({ error: e.message || String(e) });
   }
 }
