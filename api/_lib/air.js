@@ -1,63 +1,97 @@
-const BASE = process.env.AIRTABLE_BASE_ID;
-const KEY  = process.env.AIRTABLE_API_KEY;
+// api/_lib/air.js
 
-const API = `https://api.airtable.com/v0/${BASE}`;
-const HDRS = {
-  'Authorization': `Bearer ${KEY}`,
-  'Content-Type': 'application/json'
-};
+// --- ENV ---
+const AIRTABLE_KEY  = process.env.AIRTABLE_API_KEY;
+const AIRTABLE_BASE = process.env.AIRTABLE_BASE || process.env.AIRTABLE_BASE_ID;
 
-export function cors(res){
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS,PATCH,DELETE');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+if (!AIRTABLE_KEY || !AIRTABLE_BASE) {
+  console.warn('[air.js] Missing AIRTABLE_API_KEY or AIRTABLE_BASE env vars');
 }
 
-export function fstr(s=''){ return String(s).replace(/'/g, "''"); }
-
-export async function aGet(table, params={}){
-  const url = new URL(`${API}/${encodeURIComponent(table)}`);
-  for (const [k,v] of Object.entries(params)){
-    if (Array.isArray(v)) {
-      const keyName = k === 'fields' ? 'fields[]' : k;   // поддержка массивов полей
-      v.forEach(val => url.searchParams.append(keyName, val));
-      }
-    else if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
-  }
-  const r = await fetch(url, { headers: HDRS });
-  if (!r.ok) throw new Error(`GET ${table}: ${r.status} ${await r.text()}`);
-  return r.json();
-}
-
-export async function aCreate(table, records){
-  const r = await fetch(`${API}/${encodeURIComponent(table)}`, {
-    method: 'POST',
-    headers: HDRS,
-    body: JSON.stringify({ records: records.map(f=>({ fields: f })), typecast: true })
-  });
-  if (!r.ok) throw new Error(`CREATE ${table}: ${r.status} ${await r.text()}`);
-  return r.json();
-}
-
-export async function aFindOne(table, filterByFormula){
-  const js = await aGet(table, { maxRecords: '1', filterByFormula });
-  return js.records?.[0] || null;
-}
-
+// --- Таблицы (единые имена по базе) ---
 export const T = {
-  menu: process.env.MENU_TABLE || 'Menu',
-  employees: process.env.EMPLOYEES_TABLE || 'Employees',
-  orders: process.env.ORDERS_TABLE || 'Orders',
-  mealboxes: process.env.MEALBOXES_TABLE || 'Meal Boxes',
-  orderlines: process.env.ORDERLINES_TABLE || 'Order Lines',
-  orgs: process.env.ORGS_TABLE || 'Organizations'
-}
-  export async function aUpdate(table, records){
-  const r = await fetch(`${API}/${encodeURIComponent(table)}`, {
-    method: 'PATCH',
-    headers: HDRS,
-    body: JSON.stringify({ records, typecast: true })
-  });
-  if (!r.ok) throw new Error(`UPDATE ${table}: ${r.status} ${await r.text()}`);
-  return r.json();
+  employees:   'Employees',
+  organizations: 'Organizations',
+  menu:        'Menu',          // расписание меню на даты
+  orders:      'Orders',
+  orderlines:  'Order Lines',
+  mealboxes:   'Meal Boxes',
 };
+
+// --- Утилиты ---
+function buildQuery(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null) continue;
+    if (Array.isArray(v)) {
+      v.forEach((item) => qs.append(k, String(item)));
+    } else {
+      qs.append(k, String(v));
+    }
+  }
+  return qs.toString();
+}
+
+// безопасная строка для формул Airtable (экраним одиночные кавычки)
+export function fstr(s = '') {
+  return String(s).replace(/'/g, "\\'");
+}
+
+// простые CORS заголовки для API
+export function cors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
+
+// Базовый fetch к Airtable
+async function airRequest(method, table, { query, body, label } = {}) {
+  const baseUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE}/${encodeURIComponent(table)}`;
+  const url = query ? `${baseUrl}?${buildQuery(query)}` : baseUrl;
+
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${AIRTABLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const json = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    const prefix = label ? `${label} ${table}` : `${method} ${table}`;
+    throw new Error(`${prefix}: ${res.status} ${JSON.stringify(json)}`);
+  }
+  return json;
+}
+
+// --- Публичные хелперы ---
+
+// GET с query-параметрами (fields[], filterByFormula, maxRecords и т.д.)
+export async function aGet(table, params = {}) {
+  return airRequest('GET', table, { query: params, label: 'GET' });
+}
+
+// Создание записей (всегда с typecast:true для ссылок/селектов)
+export async function aCreate(table, records) {
+  const body = { records, typecast: true };
+  return airRequest('POST', table, { body, label: 'CREATE' });
+}
+
+// Обновление записей (всегда с typecast:true)
+export async function aUpdate(table, records) {
+  const body = { records, typecast: true };
+  return airRequest('PATCH', table, { body, label: 'UPDATE' });
+}
+
+// Найти один (первый) по формуле; вернёт объект записи или null
+export async function aFindOne(table, filterFormula) {
+  const resp = await aGet(table, {
+    filterByFormula: filterFormula,
+    maxRecords: 1,
+    pageSize: 1,
+  });
+  return resp.records && resp.records.length ? resp.records[0] : null;
+}
