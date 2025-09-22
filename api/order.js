@@ -1,208 +1,248 @@
-// api/order.js
-//
-// Создаёт ЕДИНИЧНЫЙ заказ (сотрудник).
-// Тело запроса (JSON):
-// {
-//   "employeeID": "recXXXX",            // RECORD_ID() из Employees
-//   "org": "org120",                    // код организации
-//   "token": "........",                // Order Token из Employees
-//   "date": "2025-09-22",               // дата меню (YYYY-MM-DD)
-//   "included": {
-//     "mainId": "recMenuMain",          // Menu record id (Main)
-//     "sideId": "recMenuSide",          // Menu record id (Side) - опционально
-//     "extras": ["recMenu1","recMenu2"] // до 2 доп.позиций (Menu record id)
-//   }
-// }
-//
-// Возвращает ok, orderId, созданные дети и readBack.
+// api/order.js — standalone версия без ./_lib/air.js
 
-import { aGet, aPost, aPatch, T, fstr, cors } from './_lib/air.js';
-
-// --- НАЗВАНИЯ ПОЛЕЙ (ENV → дефолты). В ENV можно писать с _ вместо пробелов ---
-const deU = (s) => (s || '').replace(/_/g, ' ');
-
-const F = {
-  // Orders
-  orderEmployee: deU(process.env.ORDER_EMP_FIELD) || 'Employee',
-  orderMBLink:   deU(process.env.ORDER_MB_LINK_FIELD) || 'Meal Boxes',
-  orderOLLink:   deU(process.env.ORDER_OL_LINK_FIELD) || 'Order Lines',
-
-  // Meal Boxes
-  mbOrder: deU(process.env.MB_ORDER_FIELD) || 'Order',
-  mbMain:  deU(process.env.MB_MAIN_FIELD)  || 'Main (Menu Item)',
-  mbSide:  deU(process.env.MB_SIDE_FIELD)  || 'Side (Menu Item)',
-  mbQty:   deU(process.env.MB_QTY_FIELD)   || 'Quantity',
-  mbType:  deU(process.env.MB_TYPE_FIELD)  || 'Line Type',
-
-  // Order Lines
-  olOrder: deU(process.env.OL_ORDER_FIELD) || 'Order',
-  olItem:  deU(process.env.OL_ITEM_FIELD)  || 'Item (Menu Item)',
-  olQty:   deU(process.env.OL_QTY_FIELD)   || 'Quantity',
-  olType:  deU(process.env.OL_TYPE_FIELD)  || 'Line Type',
-
-  // Employees (проверки)
-  empOrgLookup: deU(process.env.EMP_ORG_LOOKUP) || 'OrgID (from Organization)',
-  empToken:     deU(process.env.EMP_TOKEN_FIELD) || 'Order Token',
-  empStatus:    deU(process.env.EMP_STATUS_FIELD) || 'Status'
+export const config = {
+  runtime: 'nodejs18.x',
 };
 
-// --- Утилиты ---------------------------------------------------------------
-const bad = (res, code, msg) => res.status(code).json({ error: msg });
+// ---- helpers ----------------------------------------------------
 
-const oneOrNull = (arr) => (Array.isArray(arr) && arr.length ? arr[0] : null);
+const ENV = (k, d) => process.env[k] ?? d;
+const BASE = ENV('AIRTABLE_BASE_ID');
+const API_KEY = ENV('AIRTABLE_API_KEY');
 
-const arrify = (v) => (Array.isArray(v) ? v : (v == null ? [] : [v]));
+const TABLE = {
+  ORDERS:     ENV('TBL_ORDERS',     'Orders'),
+  EMPLOYEES:  ENV('TBL_EMPLOYEES',  'Employees'),
+  MENU:       ENV('TBL_MENU',       'Menu'),
+  MEALBOXES:  ENV('TBL_MEALBOXES',  'Meal Boxes'),
+  ORDERLINES: ENV('TBL_ORDERLINES', 'Order Lines'),
+};
 
-// проверка: дата доступна (в меню есть позиции на эту дату)
-async function assertDateIsAvailable(date, org) {
-  // Фильтр только по дате; если нужно — добавишь доп.условия по доступу/OrgAccess
-  const r = await aGet(T.menu, {
-    filterByFormula: `IS_SAME({Date}, DATETIME_PARSE('${fstr(date)}'), 'day')`,
-    maxRecords: 1,
-    'fields[]': ['Date']
+const F = {
+  EMP_ORG_LOOKUP: ENV('FLD_EMP_ORG_LOOKUP', 'OrgID (from Organization)'),
+  EMP_TOKEN:      ENV('FLD_EMP_TOKEN', 'Order Token'),
+  EMP_STATUS:     ENV('FLD_EMP_STATUS', 'Status'),
+
+  ORDER_EMPLOYEE: ENV('FLD_ORDER_EMPLOYEE', 'Employee'),
+  ORDER_MB_LINK:  ENV('FLD_ORDER_MB_LINK',  'Meal Boxes'),
+  ORDER_OL_LINK:  ENV('FLD_ORDER_OL_LINK',  'Order Lines'),
+
+  MB_ORDER: ENV('FLD_MB_ORDER', 'Order'),
+  MB_MAIN:  ENV('FLD_MB_MAIN',  'Main (Menu Item)'),
+  MB_SIDE:  ENV('FLD_MB_SIDE',  'Side (Menu Item)'),
+  MB_QTY:   ENV('FLD_MB_QTY',   'Quantity'),
+  MB_TYPE:  ENV('FLD_MB_TYPE',  'Line Type'),
+
+  OL_ORDER: ENV('FLD_OL_ORDER', 'Order'),
+  OL_ITEM:  ENV('FLD_OL_ITEM',  'Item (Menu Item)'),
+  OL_QTY:   ENV('FLD_OL_QTY',   'Quantity'),
+  OL_TYPE:  ENV('FLD_OL_TYPE',  'Line Type'),
+};
+
+const json = (res, code, data) => {
+  res.statusCode = code;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.end(JSON.stringify(data));
+};
+
+const atHeaders = {
+  Authorization: `Bearer ${API_KEY}`,
+  'Content-Type': 'application/json',
+};
+
+const atUrl = (table) =>
+  `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}`;
+
+async function atGet(table, params = {}) {
+  const usp = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (Array.isArray(v)) v.forEach((vv) => usp.append(k, vv));
+    else if (v != null) usp.append(k, v);
   });
-  return (r.records || []).length > 0;
+  const url = `${atUrl(table)}?${usp.toString()}`;
+  const r = await fetch(url, { headers: atHeaders });
+  if (!r.ok) throw new Error(`AT GET ${table}: ${r.status} ${await r.text()}`);
+  return r.json();
 }
 
-// --- Основной обработчик ---------------------------------------------------
+async function atPost(table, body) {
+  const r = await fetch(atUrl(table), {
+    method: 'POST',
+    headers: atHeaders,
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`AT POST ${table}: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
+async function atPatch(table, body) {
+  const r = await fetch(atUrl(table), {
+    method: 'PATCH',
+    headers: atHeaders,
+    body: JSON.stringify(body),
+  });
+  if (!r.ok)
+    throw new Error(`AT PATCH ${table}: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
+const one = (arr) => (Array.isArray(arr) && arr.length ? arr[0] : null);
+
+// ---- core -------------------------------------------------------
+
 export default async function handler(req, res) {
-  cors(res);
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return bad(res, 405, 'POST only');
+  // CORS preflight
+  if (req.method === 'OPTIONS') return json(res, 200, { ok: true });
+
+  if (req.method !== 'POST')
+    return json(res, 405, { error: 'POST only' });
 
   try {
-    const body = req.body || {};
+    if (!API_KEY || !BASE)
+      return json(res, 500, { error: 'Missing AIRTABLE_API_KEY or AIRTABLE_BASE_ID' });
+
+    const body =
+      typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const { employeeID, org, token, date, included } = body;
 
     if (!employeeID || !org || !token || !date) {
-      return bad(res, 400, 'employeeID, org, token, date are required');
+      return json(res, 400, { error: 'employeeID, org, token, date are required' });
     }
 
-    // 1) Сотрудник и валидации
-    const empResp = await aGet(T.employees, {
-      filterByFormula: `RECORD_ID()='${fstr(employeeID)}'`,
-      'fields[]': [F.empOrgLookup, F.empToken, F.empStatus]
+    // 1) Сотрудник + проверки
+    const empResp = await atGet(TABLE.EMPLOYEES, {
+      filterByFormula: `RECORD_ID()='${employeeID}'`,
+      'fields[]': [F.EMP_ORG_LOOKUP, F.EMP_TOKEN, F.EMP_STATUS],
+      maxRecords: 1,
     });
-    const emp = oneOrNull(empResp.records);
-    if (!emp) return bad(res, 404, 'employee not found');
+    const emp = one(empResp.records);
+    if (!emp) return json(res, 404, { error: 'employee not found' });
 
-    const empFields = emp.fields || {};
-    const empOrg = oneOrNull(empFields[F.empOrgLookup]) || empFields[F.empOrgLookup] || null;
-    if (empOrg !== org) return bad(res, 403, 'employee not allowed (org mismatch)');
+    const ef = emp.fields || {};
+    const empOrg =
+      (Array.isArray(ef[F.EMP_ORG_LOOKUP]) ? ef[F.EMP_ORG_LOOKUP][0] : ef[F.EMP_ORG_LOOKUP]) || null;
+    if (empOrg !== org) return json(res, 403, { error: 'employee not allowed (org mismatch)' });
 
-    const empTok = empFields[F.empToken];
-    if (!empTok || empTok !== token) return bad(res, 403, 'invalid token');
+    const empToken = ef[F.EMP_TOKEN];
+    if (!empToken || empToken !== token) return json(res, 403, { error: 'invalid token' });
 
-    // (опц.) проверка статуса
-    const st = empFields[F.empStatus];
-    if (st && String(st).toLowerCase() !== 'active') {
-      return bad(res, 403, 'employee not active');
+    if (ef[F.EMP_STATUS] && String(ef[F.EMP_STATUS]).toLowerCase() !== 'active') {
+      return json(res, 403, { error: 'employee not active' });
     }
 
-    // 2) Дата доступна?
-    const okDate = await assertDateIsAvailable(date, org);
-    if (!okDate) return bad(res, 400, 'date is not available for this org');
+    // 2) Дата доступна в Menu?
+    const menuResp = await atGet(TABLE.MENU, {
+      filterByFormula: `IS_SAME({Date}, DATETIME_PARSE('${date}'), 'day')`,
+      'fields[]': ['Date'],
+      maxRecords: 1,
+    });
+    if (!menuResp.records?.length)
+      return json(res, 400, { error: 'date is not available for this org' });
 
-    // 3) Создаём заказ (КЛЮЧЕВОЕ: проставляем Employee линк)
+    // 3) Создаём заказ (линкуем Employee)
     const orderFields = {
       'Order Date': date,
       'Order Type': 'Employee',
-      [F.orderEmployee]: [emp.id] // ← линк на сотрудника
+      [F.ORDER_EMPLOYEE]: [emp.id], // <= ключевое
     };
-
-    const orderResp = await aPost(T.orders, {
+    const orderCreate = await atPost(TABLE.ORDERS, {
+      typecast: true,
       records: [{ fields: orderFields }],
-      typecast: true
     });
-    const orderRec = oneOrNull(orderResp.records);
-    if (!orderRec) return bad(res, 500, 'order create failed');
+    const orderRec = one(orderCreate.records);
+    if (!orderRec) return json(res, 500, { error: 'order create failed' });
     const orderId = orderRec.id;
 
-    // 4) Записываем детей
-    const writeLog = { mb_main: {}, mb_side: {}, ol_item: {}, qty_inputs: {} };
+    const ids = { mealBoxes: [], orderLines: [] };
+    const writeLog = {};
 
-    // Meal Box (main + side)
-    const mbRecords = [];
-    if (included && (included.mainId || included.sideId)) {
+    // 4) Meal Box
+    if (included?.mainId || included?.sideId) {
       const mbFields = {
-        [F.mbOrder]: [orderId],
-        [F.mbQty]: 1,
-        [F.mbType]: 'Included'
+        [F.MB_ORDER]: [orderId],
+        [F.MB_QTY]: 1,
+        [F.MB_TYPE]: 'Included',
       };
-      if (included.mainId) mbFields[F.mbMain] = [{ id: included.mainId }];
-      if (included.sideId) mbFields[F.mbSide] = [{ id: included.sideId }];
+      if (included.mainId) mbFields[F.MB_MAIN] = [{ id: included.mainId }];
+      if (included.sideId) mbFields[F.MB_SIDE] = [{ id: included.sideId }];
 
-      const mbResp = await aPost(T.mealboxes, {
+      const mbResp = await atPost(TABLE.MEALBOXES, {
+        typecast: true,
         records: [{ fields: mbFields }],
-        typecast: true
       });
-      (mbResp.records || []).forEach(r => mbRecords.push(r));
-      writeLog.mb_main.ok = [F.mbMain];
-      if (included.sideId) writeLog.mb_side.ok = [F.mbSide];
+      (mbResp.records || []).forEach((r) => ids.mealBoxes.push(r.id));
+      writeLog.mb_main = { ok: [F.MB_MAIN] };
+      if (included.sideId) writeLog.mb_side = { ok: [F.MB_SIDE] };
     }
 
-    // Order Lines (extras)
-    const olRecords = [];
-    const extras = (included && included.extras) ? included.extras.slice(0, 2) : [];
+    // 5) Order Lines (extras)
+    const extras = Array.isArray(included?.extras)
+      ? included.extras.slice(0, 2)
+      : [];
     if (extras.length) {
-      const toCreate = extras.map(id => ({
-        fields: {
-          [F.olOrder]: [orderId],
-          [F.olItem]: [{ id }],
-          [F.olQty]: 1,
-          [F.olType]: 'Included'
-        }
-      }));
-      const olResp = await aPost(T.orderlines, {
-        records: toCreate,
-        typecast: true
+      const olCreate = await atPost(TABLE.ORDERLINES, {
+        typecast: true,
+        records: extras.map((itemId) => ({
+          fields: {
+            [F.OL_ORDER]: [orderId],
+            [F.OL_ITEM]: [{ id: itemId }],
+            [F.OL_QTY]: 1,
+            [F.OL_TYPE]: 'Included',
+          },
+        })),
       });
-      (olResp.records || []).forEach(r => olRecords.push(r));
-      writeLog.ol_item.ok = [F.olItem];
+      (olCreate.records || []).forEach((r) => ids.orderLines.push(r.id));
+      writeLog.ol_item = { ok: [F.OL_ITEM] };
     }
 
-    // 5) (подстраховка) Пролинкуем детей с родителем из стороны Orders
+    // 6) Патчим заказ обратными ссылками
     const patchFields = {};
-    if (mbRecords.length) patchFields[F.orderMBLink] = mbRecords.map(r => r.id);
-    if (olRecords.length) patchFields[F.orderOLLink] = olRecords.map(r => r.id);
+    if (ids.mealBoxes.length) patchFields[F.ORDER_MB_LINK] = ids.mealBoxes;
+    if (ids.orderLines.length) patchFields[F.ORDER_OL_LINK] = ids.orderLines;
     if (Object.keys(patchFields).length) {
-      await aPatch(T.orders, {
+      await atPatch(TABLE.ORDERS, {
+        typecast: true,
         records: [{ id: orderId, fields: patchFields }],
-        typecast: true
       });
     }
 
-    // 6) ReadBack для контроля
-    const readOrder = await aGet(T.orders, {
-      filterByFormula: `RECORD_ID()='${fstr(orderId)}'`,
-      'fields[]': [F.orderMBLink, F.orderOLLink, 'Order Date', 'Order Type', F.orderEmployee]
+    // 7) Read-back
+    const readOrder = await atGet(TABLE.ORDERS, {
+      filterByFormula: `RECORD_ID()='${orderId}'`,
+      'fields[]': [F.ORDER_EMPLOYEE, F.ORDER_MB_LINK, F.ORDER_OL_LINK, 'Order Date', 'Order Type'],
+      maxRecords: 1,
     });
-    const readOL = olRecords.length
-      ? await aGet(T.orderlines, {
-          filterByFormula: `OR(${olRecords.map(r => `RECORD_ID()='${fstr(r.id)}'`).join(',')})`
-        })
-      : { records: [] };
-    const readMB = mbRecords.length
-      ? await aGet(T.mealboxes, {
-          filterByFormula: `OR(${mbRecords.map(r => `RECORD_ID()='${fstr(r.id)}'`).join(',')})`
+    const rbOrder = one(readOrder.records) || null;
+
+    const rbMB = ids.mealBoxes.length
+      ? await atGet(TABLE.MEALBOXES, {
+          filterByFormula: `OR(${ids.mealBoxes.map((id) => `RECORD_ID()='${id}'`).join(',')})`,
         })
       : { records: [] };
 
-    return res.status(200).json({
+    const rbOL = ids.orderLines.length
+      ? await atGet(TABLE.ORDERLINES, {
+          filterByFormula: `OR(${ids.orderLines.map((id) => `RECORD_ID()='${id}'`).join(',')})`,
+        })
+      : { records: [] };
+
+    return json(res, 200, {
       ok: true,
       orderId,
-      ids: {
-        orderLines: olRecords.map(r => r.id),
-        mealBoxes: mbRecords.map(r => r.id)
-      },
+      ids,
       writeLog,
       readBack: {
-        order: oneOrNull(readOrder.records) || null,
-        orderLines: readOL.records || [],
-        mealBoxes: readMB.records || []
-      }
+        order: rbOrder,
+        mealBoxes: rbMB.records || [],
+        orderLines: rbOL.records || [],
+      },
     });
   } catch (e) {
-    return res.status(500).json({ error: e.message || String(e) });
+    console.error('order.js error:', e);
+    return json(res, 500, { error: e.message || String(e) });
   }
 }
