@@ -4,7 +4,7 @@ export const config = {
   runtime: 'nodejs18.x',
 };
 
-// ---- helpers ----------------------------------------------------
+// ---- helpers ---------------------------------------------------
 
 const ENV = (k, d) => process.env[k] ?? d;
 const BASE = ENV('AIRTABLE_BASE_ID');
