@@ -195,10 +195,14 @@ async function findExistingEmployeeOrder(date, employeeId) {
       {Order Type}='Employee',
       {Order Date}='${date}',
       FIND('${employeeId}', ARRAYJOIN({${F.ORDER_EMPLOYEE}}&""))>0,
-      OR( IS_BLANK({Status}), {Status}!='Cancelled' )
+      NOT({Status}='Cancelled')
     )`;
-  const r = await atGet(TABLE.ORDERS, { filterByFormula: filter, maxRecords: 1, 'fields[]': [] });
-  return one(r.records)?.id || null;
+  const r = await atGet(TABLE.ORDERS, {
+    filterByFormula: filter,
+    maxRecords: 1,
+    'fields[]': []
+  });
+  return (r.records && r.records[0] && r.records[0].id) || null;
 }
 
 module.exports = async (req,res)=>{
