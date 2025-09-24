@@ -1,119 +1,106 @@
-// api/order.js — standalone версия без ./_lib/air.js
+// api/order.js — CommonJS, без зависимостей
 
-export const config = {
-  runtime: 'nodejs18.x',
-};
+function env(k, d) { return process.env[k] ?? d; }
 
-// ---- helpers ---------------------------------------------------
-
-const ENV = (k, d) => process.env[k] ?? d;
-const BASE = ENV('AIRTABLE_BASE_ID');
-const API_KEY = ENV('AIRTABLE_API_KEY');
+const BASE   = env('AIRTABLE_BASE_ID');
+const APIKEY = env('AIRTABLE_API_KEY');
 
 const TABLE = {
-  ORDERS:     ENV('TBL_ORDERS',     'Orders'),
-  EMPLOYEES:  ENV('TBL_EMPLOYEES',  'Employees'),
-  MENU:       ENV('TBL_MENU',       'Menu'),
-  MEALBOXES:  ENV('TBL_MEALBOXES',  'Meal Boxes'),
-  ORDERLINES: ENV('TBL_ORDERLINES', 'Order Lines'),
+  ORDERS:     env('TBL_ORDERS',     'Orders'),
+  EMPLOYEES:  env('TBL_EMPLOYEES',  'Employees'),
+  MENU:       env('TBL_MENU',       'Menu'),
+  MEALBOXES:  env('TBL_MEALBOXES',  'Meal Boxes'),
+  ORDERLINES: env('TBL_ORDERLINES', 'Order Lines'),
 };
 
 const F = {
-  EMP_ORG_LOOKUP: ENV('FLD_EMP_ORG_LOOKUP', 'OrgID (from Organization)'),
-  EMP_TOKEN:      ENV('FLD_EMP_TOKEN', 'Order Token'),
-  EMP_STATUS:     ENV('FLD_EMP_STATUS', 'Status'),
+  EMP_ORG_LOOKUP: env('FLD_EMP_ORG_LOOKUP', 'OrgID (from Organization)'),
+  EMP_TOKEN:      env('FLD_EMP_TOKEN',      'Order Token'),
+  EMP_STATUS:     env('FLD_EMP_STATUS',     'Status'),
 
-  ORDER_EMPLOYEE: ENV('FLD_ORDER_EMPLOYEE', 'Employee'),
-  ORDER_MB_LINK:  ENV('FLD_ORDER_MB_LINK',  'Meal Boxes'),
-  ORDER_OL_LINK:  ENV('FLD_ORDER_OL_LINK',  'Order Lines'),
+  ORDER_EMPLOYEE: env('FLD_ORDER_EMPLOYEE', 'Employee'),
+  ORDER_MB_LINK:  env('FLD_ORDER_MB_LINK',  'Meal Boxes'),
+  ORDER_OL_LINK:  env('FLD_ORDER_OL_LINK',  'Order Lines'),
 
-  MB_ORDER: ENV('FLD_MB_ORDER', 'Order'),
-  MB_MAIN:  ENV('FLD_MB_MAIN',  'Main (Menu Item)'),
-  MB_SIDE:  ENV('FLD_MB_SIDE',  'Side (Menu Item)'),
-  MB_QTY:   ENV('FLD_MB_QTY',   'Quantity'),
-  MB_TYPE:  ENV('FLD_MB_TYPE',  'Line Type'),
+  MB_ORDER: env('FLD_MB_ORDER', 'Order'),
+  MB_MAIN:  env('FLD_MB_MAIN',  'Main (Menu Item)'),
+  MB_SIDE:  env('FLD_MB_SIDE',  'Side (Menu Item)'),
+  MB_QTY:   env('FLD_MB_QTY',   'Quantity'),
+  MB_TYPE:  env('FLD_MB_TYPE',  'Line Type'),
 
-  OL_ORDER: ENV('FLD_OL_ORDER', 'Order'),
-  OL_ITEM:  ENV('FLD_OL_ITEM',  'Item (Menu Item)'),
-  OL_QTY:   ENV('FLD_OL_QTY',   'Quantity'),
-  OL_TYPE:  ENV('FLD_OL_TYPE',  'Line Type'),
+  OL_ORDER: env('FLD_OL_ORDER', 'Order'),
+  OL_ITEM:  env('FLD_OL_ITEM',  'Item (Menu Item)'),
+  OL_QTY:   env('FLD_OL_QTY',   'Quantity'),
+  OL_TYPE:  env('FLD_OL_TYPE',  'Line Type'),
 };
 
-const json = (res, code, data) => {
+function json(res, code, data) {
   res.statusCode = code;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.end(JSON.stringify(data));
-};
+}
 
-const atHeaders = {
-  Authorization: `Bearer ${API_KEY}`,
+const atHeaders = () => ({
+  Authorization: `Bearer ${APIKEY}`,
   'Content-Type': 'application/json',
-};
-
-const atUrl = (table) =>
-  `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}`;
+});
+const atUrl = (table) => `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(table)}`;
 
 async function atGet(table, params = {}) {
   const usp = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
+  for (const [k, v] of Object.entries(params)) {
     if (Array.isArray(v)) v.forEach((vv) => usp.append(k, vv));
     else if (v != null) usp.append(k, v);
-  });
-  const url = `${atUrl(table)}?${usp.toString()}`;
-  const r = await fetch(url, { headers: atHeaders });
+  }
+  const r = await fetch(`${atUrl(table)}?${usp.toString()}`, { headers: atHeaders() });
   if (!r.ok) throw new Error(`AT GET ${table}: ${r.status} ${await r.text()}`);
   return r.json();
 }
-
 async function atPost(table, body) {
-  const r = await fetch(atUrl(table), {
-    method: 'POST',
-    headers: atHeaders,
-    body: JSON.stringify(body),
-  });
+  const r = await fetch(atUrl(table), { method: 'POST', headers: atHeaders(), body: JSON.stringify(body) });
   if (!r.ok) throw new Error(`AT POST ${table}: ${r.status} ${await r.text()}`);
   return r.json();
 }
-
 async function atPatch(table, body) {
-  const r = await fetch(atUrl(table), {
-    method: 'PATCH',
-    headers: atHeaders,
-    body: JSON.stringify(body),
-  });
-  if (!r.ok)
-    throw new Error(`AT PATCH ${table}: ${r.status} ${await r.text()}`);
+  const r = await fetch(atUrl(table), { method: 'PATCH', headers: atHeaders(), body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(`AT PATCH ${table}: ${r.status} ${await r.text()}`);
   return r.json();
 }
 
 const one = (arr) => (Array.isArray(arr) && arr.length ? arr[0] : null);
 
-// ---- core -------------------------------------------------------
+async function readRawBody(req) {
+  if (req.body && typeof req.body === 'object') return req.body; // vercel уже распарсил
+  if (req.body && typeof req.body === 'string') {
+    try { return JSON.parse(req.body); } catch { return {}; }
+  }
+  return await new Promise((resolve) => {
+    let data = '';
+    req.on('data', (chunk) => (data += chunk));
+    req.on('end', () => {
+      try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); }
+    });
+  });
+}
 
-export default async function handler(req, res) {
-  // CORS preflight
-  if (req.method === 'OPTIONS') return json(res, 200, { ok: true });
-
-  if (req.method !== 'POST')
-    return json(res, 405, { error: 'POST only' });
-
+module.exports = async (req, res) => {
   try {
-    if (!API_KEY || !BASE)
-      return json(res, 500, { error: 'Missing AIRTABLE_API_KEY or AIRTABLE_BASE_ID' });
+    if (req.method === 'OPTIONS') return json(res, 200, { ok: true });
+    if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
 
-    const body =
-      typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+    if (!BASE || !APIKEY) return json(res, 500, { error: 'Missing AIRTABLE_BASE_ID or AIRTABLE_API_KEY' });
+
+    const body = await readRawBody(req);
     const { employeeID, org, token, date, included } = body;
 
     if (!employeeID || !org || !token || !date) {
       return json(res, 400, { error: 'employeeID, org, token, date are required' });
     }
 
-    // 1) Сотрудник + проверки
+    // 1) Сотрудник и проверки
     const empResp = await atGet(TABLE.EMPLOYEES, {
       filterByFormula: `RECORD_ID()='${employeeID}'`,
       'fields[]': [F.EMP_ORG_LOOKUP, F.EMP_TOKEN, F.EMP_STATUS],
@@ -123,35 +110,31 @@ export default async function handler(req, res) {
     if (!emp) return json(res, 404, { error: 'employee not found' });
 
     const ef = emp.fields || {};
-    const empOrg =
-      (Array.isArray(ef[F.EMP_ORG_LOOKUP]) ? ef[F.EMP_ORG_LOOKUP][0] : ef[F.EMP_ORG_LOOKUP]) || null;
+    const empOrg = (Array.isArray(ef[F.EMP_ORG_LOOKUP]) ? ef[F.EMP_ORG_LOOKUP][0] : ef[F.EMP_ORG_LOOKUP]) || null;
     if (empOrg !== org) return json(res, 403, { error: 'employee not allowed (org mismatch)' });
-
-    const empToken = ef[F.EMP_TOKEN];
-    if (!empToken || empToken !== token) return json(res, 403, { error: 'invalid token' });
-
+    if (!ef[F.EMP_TOKEN] || ef[F.EMP_TOKEN] !== token) return json(res, 403, { error: 'invalid token' });
     if (ef[F.EMP_STATUS] && String(ef[F.EMP_STATUS]).toLowerCase() !== 'active') {
       return json(res, 403, { error: 'employee not active' });
     }
 
-    // 2) Дата доступна в Menu?
+    // 2) Проверка даты в Menu (как минимум одна запись на день)
     const menuResp = await atGet(TABLE.MENU, {
       filterByFormula: `IS_SAME({Date}, DATETIME_PARSE('${date}'), 'day')`,
       'fields[]': ['Date'],
       maxRecords: 1,
     });
-    if (!menuResp.records?.length)
-      return json(res, 400, { error: 'date is not available for this org' });
+    if (!menuResp.records?.length) return json(res, 400, { error: 'date is not available for this org' });
 
-    // 3) Создаём заказ (линкуем Employee)
-    const orderFields = {
-      'Order Date': date,
-      'Order Type': 'Employee',
-      [F.ORDER_EMPLOYEE]: [emp.id], // <= ключевое
-    };
+    // 3) Создаём заказ и сразу линкуем Employee
     const orderCreate = await atPost(TABLE.ORDERS, {
       typecast: true,
-      records: [{ fields: orderFields }],
+      records: [{
+        fields: {
+          'Order Date': date,
+          'Order Type': 'Employee',
+          [F.ORDER_EMPLOYEE]: [emp.id],
+        },
+      }],
     });
     const orderRec = one(orderCreate.records);
     if (!orderRec) return json(res, 500, { error: 'order create failed' });
@@ -170,21 +153,16 @@ export default async function handler(req, res) {
       if (included.mainId) mbFields[F.MB_MAIN] = [{ id: included.mainId }];
       if (included.sideId) mbFields[F.MB_SIDE] = [{ id: included.sideId }];
 
-      const mbResp = await atPost(TABLE.MEALBOXES, {
-        typecast: true,
-        records: [{ fields: mbFields }],
-      });
+      const mbResp = await atPost(TABLE.MEALBOXES, { typecast: true, records: [{ fields: mbFields }] });
       (mbResp.records || []).forEach((r) => ids.mealBoxes.push(r.id));
       writeLog.mb_main = { ok: [F.MB_MAIN] };
       if (included.sideId) writeLog.mb_side = { ok: [F.MB_SIDE] };
     }
 
-    // 5) Order Lines (extras)
-    const extras = Array.isArray(included?.extras)
-      ? included.extras.slice(0, 2)
-      : [];
+    // 5) Extras → Order Lines
+    const extras = Array.isArray(included?.extras) ? included.extras.slice(0, 2) : [];
     if (extras.length) {
-      const olCreate = await atPost(TABLE.ORDERLINES, {
+      const olResp = await atPost(TABLE.ORDERLINES, {
         typecast: true,
         records: extras.map((itemId) => ({
           fields: {
@@ -195,39 +173,33 @@ export default async function handler(req, res) {
           },
         })),
       });
-      (olCreate.records || []).forEach((r) => ids.orderLines.push(r.id));
+      (olResp.records || []).forEach((r) => ids.orderLines.push(r.id));
       writeLog.ol_item = { ok: [F.OL_ITEM] };
     }
 
-    // 6) Патчим заказ обратными ссылками
+    // 6) Патчим обратные ссылки в Order
     const patchFields = {};
     if (ids.mealBoxes.length) patchFields[F.ORDER_MB_LINK] = ids.mealBoxes;
     if (ids.orderLines.length) patchFields[F.ORDER_OL_LINK] = ids.orderLines;
     if (Object.keys(patchFields).length) {
-      await atPatch(TABLE.ORDERS, {
-        typecast: true,
-        records: [{ id: orderId, fields: patchFields }],
-      });
+      await atPatch(TABLE.ORDERS, { typecast: true, records: [{ id: orderId, fields: patchFields }] });
     }
 
-    // 7) Read-back
-    const readOrder = await atGet(TABLE.ORDERS, {
-      filterByFormula: `RECORD_ID()='${orderId}'`,
-      'fields[]': [F.ORDER_EMPLOYEE, F.ORDER_MB_LINK, F.ORDER_OL_LINK, 'Order Date', 'Order Type'],
-      maxRecords: 1,
-    });
-    const rbOrder = one(readOrder.records) || null;
+    // 7) Read-back (для наглядности)
+    const rbOrder = one(
+      (await atGet(TABLE.ORDERS, {
+        filterByFormula: `RECORD_ID()='${orderId}'`,
+        'fields[]': [F.ORDER_EMPLOYEE, F.ORDER_MB_LINK, F.ORDER_OL_LINK, 'Order Date', 'Order Type'],
+        maxRecords: 1,
+      })).records
+    );
 
     const rbMB = ids.mealBoxes.length
-      ? await atGet(TABLE.MEALBOXES, {
-          filterByFormula: `OR(${ids.mealBoxes.map((id) => `RECORD_ID()='${id}'`).join(',')})`,
-        })
+      ? await atGet(TABLE.MEALBOXES, { filterByFormula: `OR(${ids.mealBoxes.map(id => `RECORD_ID()='${id}'`).join(',')})` })
       : { records: [] };
 
     const rbOL = ids.orderLines.length
-      ? await atGet(TABLE.ORDERLINES, {
-          filterByFormula: `OR(${ids.orderLines.map((id) => `RECORD_ID()='${id}'`).join(',')})`,
-        })
+      ? await atGet(TABLE.ORDERLINES, { filterByFormula: `OR(${ids.orderLines.map(id => `RECORD_ID()='${id}'`).join(',')})` })
       : { records: [] };
 
     return json(res, 200, {
@@ -235,14 +207,10 @@ export default async function handler(req, res) {
       orderId,
       ids,
       writeLog,
-      readBack: {
-        order: rbOrder,
-        mealBoxes: rbMB.records || [],
-        orderLines: rbOL.records || [],
-      },
+      readBack: { order: rbOrder, mealBoxes: rbMB.records || [], orderLines: rbOL.records || [] },
     });
   } catch (e) {
-    console.error('order.js error:', e);
+    console.error('order.js failed:', e);
     return json(res, 500, { error: e.message || String(e) });
   }
-}
+};
