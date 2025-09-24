@@ -189,18 +189,21 @@ async function linkReqLogOrder(reqLogId, orderId) {
 }
 
 // — поиск существующего заказа сотрудника на дату (не Cancelled)
+// Сравниваем по дню через DATETIME_FORMAT, чтобы избежать проблем со временем/таймзоной.
 async function findExistingEmployeeOrder(date, employeeId) {
+  // date ожидается в формате 'YYYY-MM-DD'
   const filter = `
     AND(
       {Order Type}='Employee',
-      {Order Date}='${date}',
+      DATETIME_FORMAT({Order Date}, 'YYYY-MM-DD')='${date}',
       FIND('${employeeId}', ARRAYJOIN({${F.ORDER_EMPLOYEE}}&""))>0,
       NOT({Status}='Cancelled')
     )`;
+
   const r = await atGet(TABLE.ORDERS, {
     filterByFormula: filter,
     maxRecords: 1,
-    'fields[]': []
+    'fields[]': [] // нам достаточно id
   });
   return (r.records && r.records[0] && r.records[0].id) || null;
 }
