@@ -204,6 +204,52 @@ module.exports = async (req,res)=>{
       const oid = hit?.fields?.[F.RL_ORDER]?.[0];
       if (oid){ return json(res,200,{ ok:true, orderId: oid, idempotent:true }); }
     }
+    // ===== DUPLICATE GUARD: one order per employee per date =====
+async function findExistingEmployeeOrder(date, empId) {
+  // Активный = любой статус, кроме "Cancelled" (или пустой)
+  const formula = `
+    AND(
+      {Order Type}='Employee',
+      {Order Date}='${date}',
+      FIND('${empId}', ARRAYJOIN({Employee} & ""))>0,
+      OR({Status}='', {Status}!='Cancelled')
+    )`;
+  const res = await atList(TABLE.ORDERS, { maxRecords: 1, filterByFormula: formula });
+  return res?.records?.[0]?.id || null;
+}
+
+// ...внутри основного handler после всех проверок окна/прав:
+const existingOrderId = await findExistingEmployeeOrder(date, targetEmpId);
+if (existingOrderId) {
+  // Пишем лог попытки (не обязательн., но полезно для аудита)
+  if (clientToken) {
+    const key = `${date}|${targetEmpId}|${clientToken}`;
+    try {
+      await atPost(TABLE.REQLOG, {
+        typecast: true,
+        records: [{
+          fields: {
+            [F.RL_KEY]: key,
+            [F.RL_DATE]: date,
+            [F.RL_EMP]: [targetEmpId],
+            [F.RL_TOKEN]: clientToken,
+            [F.RL_ORDER]: [existingOrderId]
+          }
+        }]
+      });
+    } catch (e) {
+      console.warn('Request Log write (duplicate) failed:', e?.message || String(e));
+    }
+  }
+
+  return json({
+    ok: true,
+    duplicate: true,
+    orderId: existingOrderId,
+    reason: 'employee already has an active order for this date'
+  });
+}
+
 
     // Create order
     const orderCreate = await atPost(TABLE.ORDERS, {
