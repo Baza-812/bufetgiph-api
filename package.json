@@ -1,6 +1,1 @@
-{
-  "name": "corporate-lunch-api",
-  "private": true,
-  "type": "module",
-  "dependencies": {}
-}
+{ "name": "corporate-lunch-api", "private": true }
