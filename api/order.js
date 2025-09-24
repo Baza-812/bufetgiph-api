@@ -1,4 +1,4 @@
-// api/order.js — CommonJS, без зависимостей
+// api/order.js — CommonJS, прямой REST к Airtable, ссылки на меню = ["rec..."]
 
 function env(k, d) { return process.env[k] ?? d; }
 
@@ -42,7 +42,6 @@ function json(res, code, data) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.end(JSON.stringify(data));
 }
-
 const atHeaders = () => ({
   Authorization: `Bearer ${APIKEY}`,
   'Content-Type': 'application/json',
@@ -69,33 +68,26 @@ async function atPatch(table, body) {
   if (!r.ok) throw new Error(`AT PATCH ${table}: ${r.status} ${await r.text()}`);
   return r.json();
 }
-
 const one = (arr) => (Array.isArray(arr) && arr.length ? arr[0] : null);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function readRawBody(req) {
-  if (req.body && typeof req.body === 'object') return req.body; // vercel уже распарсил
-  if (req.body && typeof req.body === 'string') {
-    try { return JSON.parse(req.body); } catch { return {}; }
-  }
+  if (req.body && typeof req.body === 'object') return req.body;
+  if (typeof req.body === 'string') { try { return JSON.parse(req.body); } catch { return {}; } }
   return await new Promise((resolve) => {
-    let data = '';
-    req.on('data', (chunk) => (data += chunk));
-    req.on('end', () => {
-      try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); }
-    });
+    let data=''; req.on('data', c => data+=c);
+    req.on('end', () => { try { resolve(data?JSON.parse(data):{}); } catch { resolve({}); } });
   });
 }
 
 module.exports = async (req, res) => {
   try {
     if (req.method === 'OPTIONS') return json(res, 200, { ok: true });
-    if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
-
-    if (!BASE || !APIKEY) return json(res, 500, { error: 'Missing AIRTABLE_BASE_ID or AIRTABLE_API_KEY' });
+    if (req.method !== 'POST')   return json(res, 405, { error: 'POST only' });
+    if (!BASE || !APIKEY)        return json(res, 500, { error: 'Missing AIRTABLE_BASE_ID or AIRTABLE_API_KEY' });
 
     const body = await readRawBody(req);
-    const { employeeID, org, token, date, included } = body;
-
+    const { employeeID, org, token, date, included } = body || {};
     if (!employeeID || !org || !token || !date) {
       return json(res, 400, { error: 'employeeID, org, token, date are required' });
     }
@@ -117,7 +109,7 @@ module.exports = async (req, res) => {
       return json(res, 403, { error: 'employee not active' });
     }
 
-    // 2) Проверка даты в Menu (как минимум одна запись на день)
+    // 2) Дата доступна (есть хоть одна позиция на день)
     const menuResp = await atGet(TABLE.MENU, {
       filterByFormula: `IS_SAME({Date}, DATETIME_PARSE('${date}'), 'day')`,
       'fields[]': ['Date'],
@@ -132,7 +124,7 @@ module.exports = async (req, res) => {
         fields: {
           'Order Date': date,
           'Order Type': 'Employee',
-          [F.ORDER_EMPLOYEE]: [emp.id],
+          [F.ORDER_EMPLOYEE]: [emp.id], // ключевое
         },
       }],
     });
@@ -141,25 +133,25 @@ module.exports = async (req, res) => {
     const orderId = orderRec.id;
 
     const ids = { mealBoxes: [], orderLines: [] };
-    const writeLog = {};
+    const writeLog = { mb_main: {}, mb_side: {}, ol_item: {} };
 
-    // 4) Meal Box
+    // 4) Meal Box — пишем ссылки на меню МАССИВАМИ СТРОК
     if (included?.mainId || included?.sideId) {
       const mbFields = {
         [F.MB_ORDER]: [orderId],
         [F.MB_QTY]: 1,
         [F.MB_TYPE]: 'Included',
       };
-      if (included.mainId) mbFields[F.MB_MAIN] = [{ id: included.mainId }];
-      if (included.sideId) mbFields[F.MB_SIDE] = [{ id: included.sideId }];
+      if (included.mainId) mbFields[F.MB_MAIN] = [ included.mainId ];
+      if (included.sideId) mbFields[F.MB_SIDE] = [ included.sideId ];
 
       const mbResp = await atPost(TABLE.MEALBOXES, { typecast: true, records: [{ fields: mbFields }] });
       (mbResp.records || []).forEach((r) => ids.mealBoxes.push(r.id));
-      writeLog.mb_main = { ok: [F.MB_MAIN] };
-      if (included.sideId) writeLog.mb_side = { ok: [F.MB_SIDE] };
+      writeLog.mb_main.ok = [F.MB_MAIN];
+      if (included.sideId) writeLog.mb_side.ok = [F.MB_SIDE];
     }
 
-    // 5) Extras → Order Lines
+    // 5) Extras → Order Lines — ссылки на меню тоже МАССИВАМИ СТРОК
     const extras = Array.isArray(included?.extras) ? included.extras.slice(0, 2) : [];
     if (extras.length) {
       const olResp = await atPost(TABLE.ORDERLINES, {
@@ -167,25 +159,26 @@ module.exports = async (req, res) => {
         records: extras.map((itemId) => ({
           fields: {
             [F.OL_ORDER]: [orderId],
-            [F.OL_ITEM]: [{ id: itemId }],
+            [F.OL_ITEM]: [ itemId ],
             [F.OL_QTY]: 1,
             [F.OL_TYPE]: 'Included',
           },
         })),
       });
       (olResp.records || []).forEach((r) => ids.orderLines.push(r.id));
-      writeLog.ol_item = { ok: [F.OL_ITEM] };
+      writeLog.ol_item.ok = [F.OL_ITEM];
     }
 
     // 6) Патчим обратные ссылки в Order
     const patchFields = {};
-    if (ids.mealBoxes.length) patchFields[F.ORDER_MB_LINK] = ids.mealBoxes;
+    if (ids.mealBoxes.length)  patchFields[F.ORDER_MB_LINK] = ids.mealBoxes;
     if (ids.orderLines.length) patchFields[F.ORDER_OL_LINK] = ids.orderLines;
     if (Object.keys(patchFields).length) {
       await atPatch(TABLE.ORDERS, { typecast: true, records: [{ id: orderId, fields: patchFields }] });
     }
 
-    // 7) Read-back (для наглядности)
+    // 7) Read-back (дать Airtable применить линк)
+    await sleep(200);
     const rbOrder = one(
       (await atGet(TABLE.ORDERS, {
         filterByFormula: `RECORD_ID()='${orderId}'`,
@@ -193,11 +186,9 @@ module.exports = async (req, res) => {
         maxRecords: 1,
       })).records
     );
-
     const rbMB = ids.mealBoxes.length
       ? await atGet(TABLE.MEALBOXES, { filterByFormula: `OR(${ids.mealBoxes.map(id => `RECORD_ID()='${id}'`).join(',')})` })
       : { records: [] };
-
     const rbOL = ids.orderLines.length
       ? await atGet(TABLE.ORDERLINES, { filterByFormula: `OR(${ids.orderLines.map(id => `RECORD_ID()='${id}'`).join(',')})` })
       : { records: [] };
