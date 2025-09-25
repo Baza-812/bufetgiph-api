@@ -49,6 +49,7 @@ module.exports = async function handler(req, res) {
       'order_cancel'  : orderCancel,
       'dates'         : dates,
       'menu'          : menu,
+      'order_manager' : orderManager,
       'hr_orders'     : hrOrders
     };
 
