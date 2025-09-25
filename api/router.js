@@ -10,6 +10,7 @@ const orderCancel   = require('../lib/handlers/order_cancel.js');
 const dates         = require('../lib/handlers/dates.js');
 const menu          = require('../lib/handlers/menu.js');
 const hrOrders      = require('../lib/handlers/hr_orders.js');
+const orderManager  = require('../lib/handlers/order_manager.js');
 // Health можно реализовать прямо здесь, чтобы не тащить ещё один файл:
 async function health(req, res) {
   res.statusCode = 200;
