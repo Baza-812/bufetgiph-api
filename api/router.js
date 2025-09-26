@@ -41,6 +41,7 @@ module.exports = async function handler(req, res) {
       'dates'        : () => require('../lib/handlers/dates.js'),
       'menu'         : () => require('../lib/handlers/menu.js'),
       'hr_orders'    : () => require('../lib/handlers/hr_orders.js'),
+      'register'     : () => require('../lib/handlers/register.js'),
       // 'order_manager': () => require('../lib/handlers/order_manager.js'), // раскомментируйте, только если файл реально есть
     };
 
