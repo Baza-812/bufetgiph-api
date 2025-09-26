@@ -1,2 +1,1 @@
 { "name": "corporate-lunch-api", "private": true }
-"dependencies": { "resend": "^3.2.0" }
