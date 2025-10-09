@@ -13,11 +13,6 @@ function sendJson(res, code, data) {
   res.end(JSON.stringify(data));
 }
 
-// Health прямо тут — всегда доступен
-async function health(_req, res) {
-  return sendJson(res, 200, { ok: true, time: new Date().toISOString() });
-}
-
 module.exports = async function handler(req, res) {
   try {
     // CORS preflight
@@ -34,7 +29,7 @@ module.exports = async function handler(req, res) {
 
     // Карта "путь -> лоадер", чтобы не падать, если какого-то файла нет
     const loaders = {
-      'health'       : () => health,
+      'health'       : () => require('../lib/handlers/health.js'),
       'order'        : () => require('../lib/handlers/order.js'),
       'order_update' : () => require('../lib/handlers/order_update.js'),
       'order_cancel' : () => require('../lib/handlers/order_cancel.js'),
