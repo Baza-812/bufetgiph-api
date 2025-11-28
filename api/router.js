@@ -29,19 +29,24 @@ module.exports = async function handler(req, res) {
 
     // Карта "путь -> лоадер", чтобы не падать, если какого-то файла нет
     const loaders = {
-      'health'       : () => require('../lib/handlers/health.js'),
-      'order'        : () => require('../lib/handlers/order.js'),
-      'order_update' : () => require('../lib/handlers/order_update.js'),
-      'order_cancel' : () => require('../lib/handlers/order_cancel.js'),
-      'dates'        : () => require('../lib/handlers/dates.js'),
-      'menu'         : () => require('../lib/handlers/menu.js'),
-      'hr_orders'    : () => require('../lib/handlers/hr_orders.js'),
-      'register'     : () => require('../lib/handlers/register.js'),
-      'hr_employees' : () => require('../lib/handlers/hr_employees.js'),
-      'org_info'     : () => require('../lib/handlers/org_info.js'),
-      'busy'        : () => require('../lib/handlers/busy.js'),
-      'order_summary': () => require('../lib/handlers/order_summary.js'),
-      'order_manager': () => require('../lib/handlers/order_manager.js'), 
+      'health'         : () => require('../lib/handlers/health.js'),
+      'order'          : () => require('../lib/handlers/order.js'),
+      'order_update'   : () => require('../lib/handlers/order_update.js'),
+      'order_cancel'   : () => require('../lib/handlers/order_cancel.js'),
+      'dates'          : () => require('../lib/handlers/dates.js'),
+      'menu'           : () => require('../lib/handlers/menu.js'),
+      'hr_orders'      : () => require('../lib/handlers/hr_orders.js'),
+      'register'       : () => require('../lib/handlers/register.js'),
+      'hr_employees'   : () => require('../lib/handlers/hr_employees.js'),
+      'org_info'       : () => require('../lib/handlers/org_info.js'),
+      'busy'           : () => require('../lib/handlers/busy.js'),
+      'order_summary'  : () => require('../lib/handlers/order_summary.js'),
+      'order_manager'  : () => require('../lib/handlers/order_manager.js'),
+      'org_meta'       : () => require('../lib/handlers/org_meta.js'),
+      'employee_meta'  : () => require('../lib/handlers/employee_meta.js'),
+      'payment_create' : () => require('../lib/handlers/payment_create.js'),
+      'payment_status' : () => require('../lib/handlers/payment_status.js'),
+      'payment_refund' : () => require('../lib/handlers/payment_refund.js'),
     };
 
     const load = loaders[path];
