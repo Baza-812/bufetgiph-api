@@ -48,6 +48,7 @@ module.exports = async function handler(req, res) {
       'payment_webhook' : () => require('../lib/handlers/payment_webhook.js'),
       'payment_status'  : () => require('../lib/handlers/payment_status.js'),
       'payment_refund'  : () => require('../lib/handlers/payment_refund.js'),
+      'pay_all'         : () => require('../lib/handlers/pay_all.js'), // ✅ ДОБАВЛЕНО
     };
 
     const load = loaders[path];
