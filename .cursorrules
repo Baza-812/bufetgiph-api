@@ -1,0 +1,81 @@
+# Cursor Agent Rules — Baza Orders (bufetgiph)
+# Applies to commercial production project. Safety & minimal risk are top priority.
+
+## 0) High-level priorities
+- Never break production. Prefer safe, incremental changes over big refactors.
+- Prefer small PRs with clear scope and easy rollback.
+- If unsure, ask for clarification INSIDE the plan (do not guess critical business logic).
+
+## 1) Branching & Git workflow
+- Protected branches: main (production), develop (staging/dev).
+- NEVER commit directly to main or force-push to main/develop.
+- All work happens on feature branches created from develop:
+  - feature/<short-scope-name>
+- Open PRs:
+  - feature/* -> develop (test via Vercel Preview)
+  - develop -> main (release PR after successful staging checks)
+- Keep commits focused; no "drive-by" changes or unrelated refactors.
+
+## 2) Environments & Vercel
+- main = Production on Vercel.
+- develop and PR branches = Preview/Staging on Vercel.
+- NEVER change production secrets or production environment variables.
+- If changes require env vars:
+  - propose the exact variable names and intended values (no secrets)
+  - implement code that handles missing vars gracefully
+  - keep backward compatibility whenever possible
+
+## 3) Data safety (Airtable / Fillout / external systems)
+- Never write code that can modify production data unintentionally.
+- For preview/staging: default to STAGING base/token if available.
+- If a change touches Airtable schema:
+  - first produce a migration plan (fields/tables, types, defaults)
+  - keep backward compatibility (old fields still supported) unless explicitly approved
+  - do NOT delete or rename fields without a safe migration plan
+- Validate and sanitize all external inputs (URL params, forms, webhooks).
+
+## 4) "Lunch Captain" ("Старший по обедам") feature policy
+- All Lunch Captain features must be behind a feature flag:
+  - FEATURE_LUNCH_CAPTAIN=true/false (env) and/or Org-level flag in Airtable.
+- Launch strategy:
+  - code can ship to prod with flag OFF
+  - enable only for test org(s) first
+- Access control:
+  - Lunch Captain can only access data within their own Organization scope.
+  - No cross-org access under any circumstances.
+
+## 5) Architecture & code standards
+- TypeScript-first. Keep types accurate; avoid 'any' unless unavoidable and explained.
+- Prefer small, composable functions and minimal side effects.
+- Keep API contracts explicit:
+  - if API response shape changes, update frontend types and callers in the same PR.
+- No breaking changes without compatibility layer.
+- Logging:
+  - Add meaningful logs for important operations, but do not log secrets or personal data.
+
+## 6) Quality gates before PR
+- Always run:
+  - npm run lint
+  - npm run typecheck (if exists)
+  - npm test (if exists)
+  - npm run build (when relevant)
+- If a command is not present, note it in the plan.
+- Fix all TypeScript and ESLint errors introduced by changes.
+
+## 7) PR etiquette & output format
+When making changes, always provide:
+- A short plan first (files to change, why, risks).
+- A summary of what changed.
+- How to test (local + Vercel Preview checklist).
+- Any required env vars or Airtable schema changes (as a checklist).
+- Rollback plan (how to revert safely).
+
+## 8) Security & privacy
+- Never expose tokens, API keys, Airtable IDs, emails, phone numbers in logs or code.
+- Never commit .env files. .env.local must remain local.
+- Follow least-privilege for any integrations (GitHub/Vercel/Airtable).
+
+## 9) Scope boundaries
+- Do not reformat the whole codebase.
+- Do not upgrade dependencies unless explicitly requested.
+- Do not rename routes/fields/endpoints without migration plan and approval.
