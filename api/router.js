@@ -41,7 +41,8 @@ module.exports = async function handler(req, res) {
       'org_info'     : () => require('../lib/handlers/org_info.js'),
       'busy'        : () => require('../lib/handlers/busy.js'),
       'order_summary': () => require('../lib/handlers/order_summary.js'),
-      'order_manager': () => require('../lib/handlers/order_manager.js'), 
+      'order_manager': () => require('../lib/handlers/order_manager.js'),
+      'labels'       : () => require('../lib/handlers/labels.js'),
     };
 
     const load = loaders[path];
