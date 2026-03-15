@@ -44,6 +44,7 @@ module.exports = async function handler(req, res) {
       'order_manager'       : () => require('../lib/handlers/order_manager.js'),
       'payment_create'      : () => require('../lib/handlers/payment_create.js'),
       'payment_webhook'     : () => require('../lib/handlers/payment_webhook.js'),
+      'payment_status'      : () => require('../lib/handlers/payment_status.js'),
       'test_payment_setup'  : () => require('../lib/handlers/test_payment_setup.js'),
     };
 
