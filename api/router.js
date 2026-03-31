@@ -46,7 +46,12 @@ module.exports = async function handler(req, res) {
       'payment_create'      : () => require('../lib/handlers/payment_create.js'),
       'payment_webhook'     : () => require('../lib/handlers/payment_webhook.js'),
       'payment_status'      : () => require('../lib/handlers/payment_status.js'),
+      'payment_refund'      : () => require('../lib/handlers/payment_refund.js'),
       'test_payment_setup'  : () => require('../lib/handlers/test_payment_setup.js'),
+      'test_ambassador_setup': () => require('../lib/handlers/test_ambassador_setup.js'),
+      'pricing_plan'        : () => require('../lib/handlers/pricing_plan.js'),
+      'ambassador/team_stats': () => require('../lib/handlers/ambassador_team_stats.js'),
+      'ambassador/apply'    : () => require('../lib/handlers/ambassador_apply.js'),
     };
 
     const load = loaders[path];
