@@ -41,6 +41,7 @@ module.exports = async function handler(req, res) {
       'org_info'            : () => require('../lib/handlers/org_info.js'),
       'employee_info'       : () => require('../lib/handlers/employee_info.js'),
       'busy'                : () => require('../lib/handlers/busy.js'),
+      'feedback'            : () => require('../lib/handlers/feedback.js'),
       'order_summary'       : () => require('../lib/handlers/order_summary.js'),
       'order_manager'       : () => require('../lib/handlers/order_manager.js'),
       'payment_create'      : () => require('../lib/handlers/payment_create.js'),
