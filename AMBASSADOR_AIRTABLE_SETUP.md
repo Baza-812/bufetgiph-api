@@ -152,6 +152,8 @@
 - [ ] ContractType (Single select с вариантами Corporate/Ambassador)
 - [ ] TeamMinForDelivery (Number)
 - [ ] TeamMinForFreeAmbassador (Number)
+- [ ] AmbassadorNotifyEmail (Email, опционально)
+- [ ] AmbassadorTelegramChatId (Single line text, опционально)
 - [ ] PricingPlan (Link to PricingPlans)
 - [ ] DeliveryAddress (Long text)
 
@@ -167,6 +169,34 @@
 
 ### 5. Таблица AmbassadorApplications (новая)
 - [ ] Создана со всеми 10 полями
+
+### 6. Таблица AmbassadorDeliveryRuns (cron минимума доставки)
+- [ ] Создана с полями OrgCode, DeliveryDate, WarnEmailSent, CutoffProcessed, CutoffResult (см. ниже)
+
+Нужна для **идемпотентности** предупреждения за час и обработки в момент Cutoff. Пока в Vercel **не** задано `TBL_AMBASSADOR_DELIVERY_RUNS`, cron пишет в ответ `logSkipped` и **не** шлёт письма и **не** отменяет заказы.
+
+Рекомендуемые поля:
+
+| Имя поля (по умолчанию) | Тип | Назначение |
+|-------------------------|-----|------------|
+| **OrgCode** | Single line text | Код организации (`OrgID`) |
+| **DeliveryDate** | Single line text | Дата доставки `YYYY-MM-DD` |
+| **WarnEmailSent** | Checkbox | Отправлено предупреждение «остался час» |
+| **CutoffProcessed** | Checkbox | Сценарий после Cutoff уже отработан |
+| **CutoffResult** | Single line text | Пусто / `ok` / `cancelled` |
+
+Переименование полей: `FLD_ADR_*` в env (см. `lib/utils.js`).
+
+### 7. Organizations — уведомления амбассадору (опционально)
+
+| **AmbassadorNotifyEmail** | Email | Куда слать предупреждения; если пусто — Email сотрудника с ролью Ambassador |
+| **AmbassadorTelegramChatId** | Single line text | `chat_id` Telegram (нужен `TELEGRAM_BOT_TOKEN` в Vercel) |
+
+### Cron GET `/api/ambassador_cutoff_cron`
+
+1. Настройте вызов **каждые 5–10 минут**:  
+   `GET https://<ваш-api>/api/ambassador_cutoff_cron?key=<AMBASSADOR_CUTOFF_CRON_KEY>`
+2. Env: `AMBASSADOR_CUTOFF_CRON_KEY`, `TBL_AMBASSADOR_DELIVERY_RUNS`, `RESEND_API_KEY`, `MAIL_FROM`, опционально `TELEGRAM_BOT_TOKEN`, `APP_ORIGIN`, отладка `AMBASSADOR_CUTOFF_DRY_RUN=1`.
 
 ---
 

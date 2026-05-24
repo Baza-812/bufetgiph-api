@@ -53,6 +53,7 @@ module.exports = async function handler(req, res) {
       'test_ambassador_setup': () => require('../lib/handlers/test_ambassador_setup.js'),
       'pricing_plan'        : () => require('../lib/handlers/pricing_plan.js'),
       'ambassador/team_stats': () => require('../lib/handlers/ambassador_team_stats.js'),
+      'ambassador_cutoff_cron': () => require('../lib/handlers/ambassador_cutoff_cron.js'),
       'ambassador/apply'    : () => require('../lib/handlers/ambassador_apply.js'),
     };
 
